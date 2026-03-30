@@ -406,11 +406,53 @@
       return resultado;
     }
 
-    async function lerTxtComEscolha() {
+    function decodePdfLiteralString(str) {
+      return str
+        .replace(/\\([nrtbf()\\])/g, (_, c) => {
+          const map = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '(': '(', ')': ')', '\\': '\\' };
+          return map[c] ?? c;
+        })
+        .replace(/\\([0-7]{1,3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+    }
+
+    async function lerTextoDePdf(file) {
+      const buffer = await file.arrayBuffer();
+      const raw = new TextDecoder('latin1').decode(new Uint8Array(buffer));
+
+      const blocosTexto = [];
+      const blocosBT = raw.matchAll(/BT([\s\S]*?)ET/g);
+
+      for (const [, bloco] of blocosBT) {
+        for (const m of bloco.matchAll(/\(((?:\\.|[^\\()])*)\)\s*Tj/g)) {
+          blocosTexto.push(decodePdfLiteralString(m[1]));
+        }
+
+        for (const m of bloco.matchAll(/\[((?:.|\n|\r)*?)\]\s*TJ/g)) {
+          for (const sub of m[1].matchAll(/\(((?:\\.|[^\\()])*)\)/g)) {
+            blocosTexto.push(decodePdfLiteralString(sub[1]));
+          }
+        }
+      }
+
+      const texto = blocosTexto
+        .join('\n')
+        .replace(/\r/g, '\n')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      if (!texto) {
+        throw new Error('Não foi possível extrair texto do PDF. Verifique se o PDF contém texto selecionável.');
+      }
+
+      return texto;
+    }
+
+    async function lerArquivoComEscolha() {
       return new Promise((resolve, reject) => {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.txt,text/plain';
+        input.accept = '.txt,text/plain,.pdf,application/pdf';
         input.style.display = 'none';
 
         input.addEventListener('change', async (e) => {
@@ -421,7 +463,11 @@
           }
 
           try {
-            const texto = await file.text();
+            const isPdf =
+              file.type === 'application/pdf' ||
+              file.name.toLowerCase().endsWith('.pdf');
+
+            const texto = isPdf ? await lerTextoDePdf(file) : await file.text();
             resolve(texto);
           } catch (err) {
             reject(err);
@@ -436,20 +482,27 @@
     }
 
     async function importarEtapa1() {
-      const texto = await lerTxtComEscolha();
+      let texto;
+      try {
+        texto = await lerArquivoComEscolha();
+      } catch (err) {
+        console.error('[SIMIL-OS-IMPORT][Etapa 1] erro ao ler arquivo:', err);
+        toast(`Falha ao ler o arquivo.\n${err?.message || err}`);
+        return;
+      }
       if (!texto) return;
 
       const dados = extrairDadosTxt(texto);
       if (!dados.os) {
-        toast('Não consegui localizar o código da OS no TXT.');
+        toast('Não consegui localizar o código da OS no arquivo.');
         return;
       }
 
       const resultado = preencherCamposEtapa1(dados);
       const preenchidos = resultado.filter(x => x.ok).length;
 
-      console.log('[SIMIL-OS-TXT][Etapa 1] Dados:', dados);
-      console.log('[SIMIL-OS-TXT][Etapa 1] Resultado:', resultado);
+      console.log('[SIMIL-OS-IMPORT][Etapa 1] Dados:', dados);
+      console.log('[SIMIL-OS-IMPORT][Etapa 1] Resultado:', resultado);
 
       toast(
         `OS encontrada: ${dados.os.codigoCompleto}\n` +
@@ -458,15 +511,22 @@
     }
 
     async function importarEtapa2() {
-      const texto = await lerTxtComEscolha();
+      let texto;
+      try {
+        texto = await lerArquivoComEscolha();
+      } catch (err) {
+        console.error('[SIMIL-OS-IMPORT][Etapa 2] erro ao ler arquivo:', err);
+        toast(`Falha ao ler o arquivo.\n${err?.message || err}`);
+        return;
+      }
       if (!texto) return;
 
       const dados = extrairDadosTxt(texto);
       const resultado = await preencherCamposEtapa2(dados);
       const preenchidos = resultado.filter(x => x.ok).length;
 
-      console.log('[SIMIL-OS-TXT][Etapa 2] Dados:', dados);
-      console.log('[SIMIL-OS-TXT][Etapa 2] Resultado:', resultado);
+      console.log('[SIMIL-OS-IMPORT][Etapa 2] Dados:', dados);
+      console.log('[SIMIL-OS-IMPORT][Etapa 2] Resultado:', resultado);
 
       toast(
         `Dados da OS processados.\n` +
@@ -505,7 +565,7 @@
         const btn2 = document.createElement('button');
         btn2.id = BTN2_ID;
         btn2.type = 'button';
-        btn2.textContent = 'TXT OS - Demais Campos';
+        btn2.textContent = 'Arquivo OS - Demais Campos';
         btn2.title = 'Preencher campos após gravar a OS';
 
         btn2.style.cssText = `
@@ -534,6 +594,6 @@
     obs.observe(document.documentElement, { childList: true, subtree: true });
 
   } catch (err) {
-    console.error('[SIMIL-OS-TXT] erro:', err);
+    console.error('[SIMIL-OS-IMPORT] erro:', err);
   }
 })();

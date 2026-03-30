@@ -23,6 +23,34 @@
         .trim()
         .toLowerCase();
 
+    const escapeRegex = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const criarDadosBase = () => ({
+      os: null,
+      atividade: null,
+      produto: null,
+      linha: null,
+      fonte: null,
+      tipoPessoa: null,
+      cpfCnpj: null,
+      nomeProponente: null,
+      finalidade: null,
+      cep: null,
+      uf: null,
+      municipio: null,
+      bairro: null,
+      logradouro: null,
+      numero: null,
+      setor: null,
+      quadra: null,
+      bloco: null,
+      lote: null,
+      conjunto: null,
+      unidade: null,
+      nomeEmpreendimento: null,
+      complementos: null
+    });
+
     const toast = (msg) => {
       let t = document.getElementById(TOAST_ID);
       if (!t) {
@@ -52,7 +80,7 @@
     };
 
     function extrairCodigoOS(texto) {
-      const match = texto.match(/(\d{4})\.(\d{4})\.(\d{9})\/(\d{4})\.(\d{2})\.(\d{2})/);
+      const match = String(texto || '').match(/(\d{4})\.(\d{4})\.(\d{9})\/(\d{4})\.(\d{2})\.(\d{2})/);
       if (!match) return null;
 
       const [, gihab, codSolicitante, ordenador, ano, comp1, comp2] = match;
@@ -69,8 +97,8 @@
 
     function extrairMunicipioUf(texto) {
       const linha =
-        (texto.match(/Cidade\/?UF\s*[:.]?\s*(.+)/i) || [])[1] ||
-        (texto.match(/Cidade\s*\/\s*UF\s*[:.]?\s*(.+)/i) || [])[1];
+        (String(texto || '').match(/Cidade\/?UF\s*[:.]?\s*(.+)/i) || [])[1] ||
+        (String(texto || '').match(/Cidade\s*\/\s*UF\s*[:.]?\s*(.+)/i) || [])[1];
 
       if (!linha) return { municipio: null, uf: null };
 
@@ -95,46 +123,49 @@
       return { municipio: limpa, uf: null };
     }
 
+    function definirFinalidadePorAtividade(dados) {
+      const atividade = (dados.atividade || '').trim().toUpperCase();
+
+      if (atividade === 'A413') {
+        dados.finalidade = 'Aquisição de imóvel usado';
+      } else if (atividade === 'B438') {
+        dados.finalidade = 'Aquisição de terreno e construção';
+      } else if (atividade === 'B437') {
+        dados.finalidade = 'Construção em terreno próprio';
+      }
+    }
+
+    function formatarAtividadeParaTela(valor) {
+      const limpo = String(valor || '')
+        .toUpperCase()
+        .replace(/\s+/g, '')
+        .replace(/[^A-Z0-9-]/g, '');
+
+      const m = limpo.match(/^([A-Z])[-]?(\d{3})$/);
+      if (!m) return valor || '';
+
+      return `${m[1]}-${m[2]}`;
+    }
+
     function extrairDadosTxt(texto) {
-      const dados = {
-        os: extrairCodigoOS(texto),
-        atividade: null,
-        produto: null,
-        linha: null,
-        fonte: null,
-        tipoPessoa: null,
-        cpfCnpj: null,
-        nomeProponente: null,
-        finalidade: null,
-        cep: null,
-        uf: null,
-        municipio: null,
-        bairro: null,
-        logradouro: null,
-        numero: null,
-        setor: null,
-        quadra: null,
-        bloco: null,
-        lote: null,
-        conjunto: null,
-        unidade: null,
-        nomeEmpreendimento: null,
-        complementos: null
-      };
+      const dados = criarDadosBase();
+      const bruto = String(texto || '');
 
-      const atividade = texto.match(/Atividade\s*[:.]?\s*([A-Z]\d{3})/i);
-      if (atividade) dados.atividade = atividade[1].trim();
+      dados.os = extrairCodigoOS(bruto);
 
-      const produto = texto.match(/Produto\s*\.?\s*[:.]?\s*(\d{4})/i);
+      const atividade = bruto.match(/Atividade\s*[:.]?\s*([A-Z]\d{3})/i);
+      if (atividade) dados.atividade = atividade[1].trim().toUpperCase();
+
+      const produto = bruto.match(/Produto\s*\.?\s*[:.]?\s*(\d{3,4})/i);
       if (produto) dados.produto = produto[1].trim();
 
-      const linha = texto.match(/Linha\s*\.{0,3}\s*[:.]?\s*(\d{4})/i);
+      const linha = bruto.match(/Linha\s*\.{0,3}\s*[:.]?\s*(\d{3,4})/i);
       if (linha) dados.linha = linha[1].trim();
 
-      const fonte = texto.match(/Fonte\s*\.{0,3}\s*[:.]?\s*(\d{4})/i);
+      const fonte = bruto.match(/Fonte\s*\.{0,3}\s*[:.]?\s*(\d{3,4})/i);
       if (fonte) dados.fonte = fonte[1].trim();
 
-      const cliente = texto.match(/Cliente\s*\.?\s*[:.]?\s*([0-9./-]+)\s*-\s*(.+)/i);
+      const cliente = bruto.match(/Cliente\s*\.?\s*[:.]?\s*([0-9./-]+)\s*-\s*(.+)/i);
       if (cliente) {
         dados.cpfCnpj = cliente[1].trim();
         dados.nomeProponente = cliente[2].trim();
@@ -144,13 +175,7 @@
         if (digits.length === 14) dados.tipoPessoa = 'CNPJ';
       }
 
-      if (dados.atividade === 'B438') {
-        dados.finalidade = 'Aquisição de terreno e construção';
-      } else if (dados.atividade === 'B437') {
-        dados.finalidade = 'Construção em terreno próprio';
-      }
-
-      const endereco = texto.match(/Endere[cç]o\.?\s*[:.]?\s*(.+)/i);
+      const endereco = bruto.match(/Endere[cç]o\.?\s*[:.]?\s*(.+)/i);
       if (endereco) {
         const linhaEndereco = endereco[1].trim();
         const partes = linhaEndereco.split(/\s*-\s*/);
@@ -168,37 +193,243 @@
         if (parteBairro) dados.bairro = parteBairro;
       }
 
-      const cidadeUf = extrairMunicipioUf(texto);
+      const cidadeUf = extrairMunicipioUf(bruto);
       dados.municipio = cidadeUf.municipio;
       dados.uf = cidadeUf.uf;
 
-      const cep = texto.match(/CEP\.{0,6}\s*[:.]?\s*([0-9]{5}-?[0-9]{3})/i);
+      const cep = bruto.match(/CEP\.{0,6}\s*[:.]?\s*([0-9]{5}-?[0-9]{3})/i);
       if (cep) dados.cep = cep[1].trim();
 
-      const setor = texto.match(/Setor\s*[:.]\s*(.+)/i);
+      const setor = bruto.match(/Setor\s*[:.]\s*(.+)/i);
       if (setor) dados.setor = setor[1].trim();
 
-      const quadra = texto.match(/Quadra\s*[:.]\s*(.+)/i);
+      const quadra = bruto.match(/Quadra\s*[:.]\s*(.+)/i);
       if (quadra) dados.quadra = quadra[1].trim();
 
-      const bloco = texto.match(/Bloco\s*[:.]\s*(.+)/i);
+      const bloco = bruto.match(/Bloco\s*[:.]\s*(.+)/i);
       if (bloco) dados.bloco = bloco[1].trim();
 
-      const lote = texto.match(/Lote\s*[:.]\s*(.+)/i);
+      const lote = bruto.match(/Lote\s*[:.]\s*(.+)/i);
       if (lote) dados.lote = lote[1].trim();
 
-      const conjunto = texto.match(/Conjunto\s*[:.]\s*(.+)/i);
+      const conjunto = bruto.match(/Conjunto\s*[:.]\s*(.+)/i);
       if (conjunto) dados.conjunto = conjunto[1].trim();
 
-      const unidade = texto.match(/(?:N[º°o]?\s*Unidade|Unidade)\s*[:.]\s*(.+)/i);
+      const unidade = bruto.match(/(?:N[º°o]?\s*Unidade|Unidade)\s*[:.]\s*(.+)/i);
       if (unidade) dados.unidade = unidade[1].trim();
 
-      const nomeEmp = texto.match(/Nome\s+Empreendimento\s*[:.]\s*(.+)/i);
+      const nomeEmp = bruto.match(/Nome\s+Empreendimento\s*[:.]\s*(.+)/i);
       if (nomeEmp) dados.nomeEmpreendimento = nomeEmp[1].trim();
 
-      const complementos = texto.match(/Complementos\s*[:.]\s*(.+)/i);
+      const complementos = bruto.match(/Complementos\s*[:.]\s*(.+)/i);
       if (complementos) dados.complementos = complementos[1].trim();
 
+      definirFinalidadePorAtividade(dados);
+      return dados;
+    }
+
+    const ROTULOS_PDF = [
+      'Empresa', 'Município', 'Telefone', 'Email', 'A/C', 'CNPJ', 'UF', 'FAX',
+      'Assunto', 'Atividade', 'Produto', 'Linha', 'Fonte', 'Referência', 'Nome Cliente',
+      'Identificação', 'Endereço', 'Numero', 'CEP', 'Cidade/UF', 'Prazo de Execução',
+      'Valor Previsto do Serviço', 'Nome do Contato', 'Telefone do Contato',
+      'Local de Retirada de Documentos', 'Complemento', 'Bairro', 'Observação',
+      'Matrícula', 'Data/Hora Solicitação', 'Telefone Adicional'
+    ];
+
+    function obterLinhasUteis(texto) {
+      return String(texto || '')
+        .replace(/\r/g, '\n')
+        .split('\n')
+        .map(l => l.replace(/[ \t]+/g, ' ').trim())
+        .filter(Boolean);
+    }
+
+    function ehRotuloPdf(linha) {
+      const base = normalize(String(linha || '').replace(/[:.]\s*$/, ''));
+      return ROTULOS_PDF.some(rotulo => normalize(rotulo) === base);
+    }
+
+    function extrairCampoPdfPorRotulo(linhas, rotulo, opcoes = {}) {
+      const { pegarLinhaSeguinte = true } = opcoes;
+      const alvo = normalize(rotulo);
+      const regexLinha = new RegExp(`^\\s*${escapeRegex(rotulo)}\\s*[:.]?\\s*(.*)$`, 'i');
+
+      for (let i = 0; i < linhas.length; i++) {
+        const linha = linhas[i];
+        const linhaNorm = normalize(String(linha || '').replace(/[:.]\s*$/, ''));
+
+        if (linhaNorm !== alvo) {
+          const mMesmaLinha = linha.match(regexLinha);
+          if (mMesmaLinha && mMesmaLinha[1]?.trim()) {
+            return mMesmaLinha[1].trim();
+          }
+          continue;
+        }
+
+        const m = linha.match(regexLinha);
+        const resto = m?.[1]?.trim();
+        if (resto) return resto;
+        if (!pegarLinhaSeguinte) return null;
+
+        for (let j = i + 1; j < linhas.length; j++) {
+          const prox = linhas[j]?.trim();
+          if (!prox) continue;
+          if (ehRotuloPdf(prox)) return null;
+          return prox;
+        }
+      }
+
+      return null;
+    }
+
+    function extrairBlocoSequencialPdf(linhas, rotulos) {
+      const rotulosNorm = rotulos.map(r => normalize(r));
+
+      for (let i = 0; i <= linhas.length - rotulos.length; i++) {
+        let blocoValido = true;
+        const saida = {};
+
+        for (let k = 0; k < rotulos.length; k++) {
+          const linha = linhas[i + k] || '';
+          const regex = new RegExp(`^\\s*${escapeRegex(rotulos[k])}\\s*[:.]?\\s*(.*)$`, 'i');
+          const base = normalize(String(linha).replace(/[:.]\s*$/, ''));
+          const m = linha.match(regex);
+
+          if (!(base === rotulosNorm[k] || m)) {
+            blocoValido = false;
+            break;
+          }
+
+          const valorMesmaLinha = m?.[1]?.trim();
+          if (valorMesmaLinha) {
+            saida[rotulos[k]] = valorMesmaLinha;
+          }
+        }
+
+        if (!blocoValido) continue;
+
+        let cursor = i + rotulos.length;
+
+        for (const rotulo of rotulos) {
+          if (saida[rotulo]) continue;
+
+          while (cursor < linhas.length && !linhas[cursor]?.trim()) {
+            cursor++;
+          }
+
+          if (cursor >= linhas.length) break;
+
+          if (ehRotuloPdf(linhas[cursor])) {
+            saida[rotulo] = null;
+            continue;
+          }
+
+          saida[rotulo] = linhas[cursor].trim();
+          cursor++;
+        }
+
+        return saida;
+      }
+
+      return {};
+    }
+
+    function limparCep(valor) {
+      if (!valor) return null;
+      const m = String(valor).match(/\d{2}\.?\d{3}-?\d{3}/);
+      return m ? m[0] : String(valor).trim();
+    }
+
+    function extrairPrimeiroCodigoNumerico(valor) {
+      const m = String(valor || '').match(/\b\d{3,4}\b/);
+      return m ? m[0] : null;
+    }
+
+    function extrairDadosPdf(texto) {
+      const dados = criarDadosBase();
+      const linhas = obterLinhasUteis(texto);
+
+      dados.os = extrairCodigoOS(texto);
+
+      const bloco1 = extrairBlocoSequencialPdf(linhas, [
+        'Assunto',
+        'Atividade',
+        'Produto',
+        'Linha',
+        'Fonte'
+      ]);
+
+      const bloco2 = extrairBlocoSequencialPdf(linhas, [
+        'Referência',
+        'Nome Cliente',
+        'Identificação',
+        'Endereço',
+        'Numero'
+      ]);
+
+      const bloco3 = extrairBlocoSequencialPdf(linhas, [
+        'CEP',
+        'Cidade/UF',
+        'Prazo de Execução',
+        'Valor Previsto do Serviço',
+        'Nome do Contato'
+      ]);
+
+      const assunto = bloco1['Assunto'] || extrairCampoPdfPorRotulo(linhas, 'Assunto');
+      const atividadeNumero = bloco1['Atividade'] || extrairCampoPdfPorRotulo(linhas, 'Atividade');
+
+      if (assunto && atividadeNumero) {
+        dados.atividade = `${String(assunto).trim()}${String(atividadeNumero).trim()}`.toUpperCase();
+      }
+
+      dados.produto = extrairPrimeiroCodigoNumerico(
+        bloco1['Produto'] || extrairCampoPdfPorRotulo(linhas, 'Produto')
+      );
+
+      dados.linha = extrairPrimeiroCodigoNumerico(
+        bloco1['Linha'] || extrairCampoPdfPorRotulo(linhas, 'Linha')
+      );
+
+      dados.fonte = extrairPrimeiroCodigoNumerico(
+        bloco1['Fonte'] || extrairCampoPdfPorRotulo(linhas, 'Fonte')
+      );
+
+      dados.nomeProponente =
+        bloco2['Nome Cliente'] || extrairCampoPdfPorRotulo(linhas, 'Nome Cliente');
+
+      dados.logradouro =
+        bloco2['Endereço'] || extrairCampoPdfPorRotulo(linhas, 'Endereço');
+
+      dados.numero =
+        bloco2['Numero'] || extrairCampoPdfPorRotulo(linhas, 'Numero');
+
+      dados.cep = limparCep(
+        bloco3['CEP'] || extrairCampoPdfPorRotulo(linhas, 'CEP')
+      );
+
+      const cidadeUf =
+        bloco3['Cidade/UF'] || extrairCampoPdfPorRotulo(linhas, 'Cidade/UF');
+
+      if (cidadeUf) {
+        const partes = cidadeUf.split('/');
+        dados.municipio = partes[0]?.trim() || null;
+        dados.uf = partes[1]?.trim() || null;
+      }
+
+      dados.bairro = extrairCampoPdfPorRotulo(linhas, 'Bairro');
+      dados.complementos = extrairCampoPdfPorRotulo(linhas, 'Complemento', { pegarLinhaSeguinte: false });
+
+      const identificacao =
+        bloco2['Identificação'] || extrairCampoPdfPorRotulo(linhas, 'Identificação');
+
+      const digits = String(identificacao || '').replace(/\D/g, '');
+      if (digits.length === 11 || digits.length === 14) {
+        dados.cpfCnpj = identificacao.trim();
+        dados.tipoPessoa = digits.length === 11 ? 'CPF' : 'CNPJ';
+      }
+
+      definirFinalidadePorAtividade(dados);
       return dados;
     }
 
@@ -237,14 +468,98 @@
     function preencherCampo(el, valor) {
       if (!el || valor == null || valor === '') return false;
 
+      const valorFinal = String(valor);
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+
       el.focus();
-      el.value = valor;
+
+      if (setter) {
+        setter.call(el, valorFinal);
+      } else {
+        el.value = valorFinal;
+      }
+
       el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       el.dispatchEvent(new Event('blur', { bubbles: true }));
       el.blur();
 
       return true;
+    }
+
+    async function preencherAtividadeComoDigitacao(el, valor) {
+      if (!el || !valor) return false;
+
+      const bruto = String(valor).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!/^[A-Z]\d{3}$/.test(bruto)) return false;
+
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      const setValor = (v) => {
+        if (setter) setter.call(el, v);
+        else el.value = v;
+      };
+
+      el.focus();
+      el.click();
+
+      setValor('');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+
+      await sleep(120);
+
+      for (const ch of bruto) {
+        const antes = String(el.value || '');
+        const proximo = antes + ch;
+
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, bubbles: true }));
+
+        setValor(proximo);
+
+        try {
+          const pos = String(el.value || '').length;
+          el.setSelectionRange?.(pos, pos);
+        } catch (_) {}
+
+        if (typeof InputEvent !== 'undefined') {
+          el.dispatchEvent(new InputEvent('input', {
+            data: ch,
+            inputType: 'insertText',
+            bubbles: true
+          }));
+        } else {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+
+        await sleep(140);
+      }
+
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(180);
+
+      let valorFinalNormalizado = String(el.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+      if (valorFinalNormalizado !== bruto) {
+        const formatado = formatarAtividadeParaTela(bruto);
+        setValor(formatado);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(180);
+        valorFinalNormalizado = String(el.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      }
+
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Tab', bubbles: true }));
+      el.dispatchEvent(new Event('blur', { bubbles: true }));
+      el.blur();
+
+      await sleep(180);
+
+      return String(el.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === bruto;
     }
 
     function selecionarOpcao(select, textoOpcao) {
@@ -338,13 +653,26 @@
 
     async function preencherCamposEtapa2(dados) {
       const resultado = [];
+      const atividadeTela = formatarAtividadeParaTela(dados.atividade);
+
+      const inputAtividade = encontrarCampoPorLabel('Atividade', 'input');
+      const atividadeOk = await preencherAtividadeComoDigitacao(inputAtividade, dados.atividade);
+
+      resultado.push({
+        campo: 'Atividade',
+        ok: atividadeOk,
+        valor: atividadeTela
+      });
 
       const camposTexto = [
-        { label: 'Atividade', valor: dados.atividade },
         { label: 'Produto', valor: dados.produto },
         { label: 'Linha', valor: dados.linha },
         { label: 'Fonte', valor: dados.fonte },
-        { label: 'Nome do Proponente', valor: dados.nomeProponente },
+        { label: 'Nome do Cliente', valor: dados.nomeProponente },
+        { label: 'Município', valor: dados.municipio },
+        { label: 'Bairro', valor: dados.bairro },
+        { label: 'Logradouro', valor: dados.logradouro },
+        { label: 'Número', valor: dados.numero },
         { label: 'Setor', valor: dados.setor },
         { label: 'Quadra', valor: dados.quadra },
         { label: 'Bloco', valor: dados.bloco },
@@ -399,6 +727,15 @@
         valor: 'Casa'
       });
 
+      if (dados.uf) {
+        const selectUf = encontrarCampoPorLabel('UF', 'select');
+        resultado.push({
+          campo: 'UF',
+          ok: selecionarOpcao(selectUf, dados.uf),
+          valor: dados.uf
+        });
+      }
+
       if (dados.cep) {
         resultado.push(preencherCepSomente(dados.cep));
       }
@@ -407,7 +744,7 @@
     }
 
     function decodePdfLiteralString(str) {
-      return str
+      return String(str || '')
         .replace(/\\([nrtbf()\\])/g, (_, c) => {
           const map = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '(': '(', ')': ')', '\\': '\\' };
           return map[c] ?? c;
@@ -415,34 +752,116 @@
         .replace(/\\([0-7]{1,3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
     }
 
-    async function lerTextoDePdf(file) {
-      const buffer = await file.arrayBuffer();
-      const raw = new TextDecoder('latin1').decode(new Uint8Array(buffer));
+    function decodePdfHexString(hex) {
+      const clean = String(hex || '').replace(/\s+/g, '');
+      if (!clean) return '';
 
+      const pares = clean.match(/.{1,2}/g) || [];
+      const bytes = new Uint8Array(pares.map(h => parseInt(h, 16)).filter(n => !Number.isNaN(n)));
+      if (!bytes.length) return '';
+
+      try {
+        if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+          return new TextDecoder('utf-16be').decode(bytes.slice(2));
+        }
+        if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+          return new TextDecoder('utf-16le').decode(bytes.slice(2));
+        }
+      } catch (_) {}
+
+      return new TextDecoder('latin1').decode(bytes);
+    }
+
+    function extrairTextoDosOperadoresPdf(conteudo) {
       const blocosTexto = [];
-      const blocosBT = raw.matchAll(/BT([\s\S]*?)ET/g);
 
-      for (const [, bloco] of blocosBT) {
-        for (const m of bloco.matchAll(/\(((?:\\.|[^\\()])*)\)\s*Tj/g)) {
+      for (const [, bloco] of String(conteudo || '').matchAll(/\bBT\b([\s\S]*?)\bET\b/g)) {
+        for (const m of bloco.matchAll(/\(((?:\\.|[^\\()])*)\)\s*Tj\b/g)) {
           blocosTexto.push(decodePdfLiteralString(m[1]));
         }
 
-        for (const m of bloco.matchAll(/\[((?:.|\n|\r)*?)\]\s*TJ/g)) {
+        for (const m of bloco.matchAll(/<([0-9A-Fa-f\s]+)>\s*Tj\b/g)) {
+          blocosTexto.push(decodePdfHexString(m[1]));
+        }
+
+        for (const m of bloco.matchAll(/\[((?:.|\n|\r)*?)\]\s*TJ\b/g)) {
           for (const sub of m[1].matchAll(/\(((?:\\.|[^\\()])*)\)/g)) {
             blocosTexto.push(decodePdfLiteralString(sub[1]));
+          }
+          for (const sub of m[1].matchAll(/<([0-9A-Fa-f\s]+)>/g)) {
+            blocosTexto.push(decodePdfHexString(sub[1]));
           }
         }
       }
 
-      const texto = blocosTexto
+      const linhas = blocosTexto
+        .map(x => String(x || '').replace(/\r/g, '\n'))
         .join('\n')
-        .replace(/\r/g, '\n')
-        .replace(/[ \t]+/g, ' ')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
+        .split('\n')
+        .map(x => x.replace(/[ \t]+/g, ' ').trim())
+        .filter(Boolean);
 
+      const semDuplicidadeSequencial = [];
+      for (const linha of linhas) {
+        if (semDuplicidadeSequencial[semDuplicidadeSequencial.length - 1] !== linha) {
+          semDuplicidadeSequencial.push(linha);
+        }
+      }
+
+      return semDuplicidadeSequencial.join('\n').trim();
+    }
+
+    async function descomprimirFlate(bytes) {
+      if (typeof DecompressionStream === 'undefined') return null;
+
+      try {
+        const ds = new DecompressionStream('deflate');
+        const stream = new Blob([bytes]).stream().pipeThrough(ds);
+        const buffer = await new Response(stream).arrayBuffer();
+        return new Uint8Array(buffer);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    async function lerTextoDePdf(file) {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      const raw = new TextDecoder('latin1').decode(bytes);
+
+      const candidatos = [raw];
+      const streamRegex = /(\d+\s+\d+\s+obj[\s\S]*?)stream\r?\n/g;
+      let m;
+
+      while ((m = streamRegex.exec(raw)) !== null) {
+        const header = m[1] || '';
+        const inicioStream = streamRegex.lastIndex;
+        const resto = raw.slice(inicioStream);
+        const endstreamMatch = /\r?\nendstream/.exec(resto);
+        if (!endstreamMatch) continue;
+
+        const fimStream = inicioStream + endstreamMatch.index;
+        const bytesStream = bytes.slice(inicioStream, fimStream);
+
+        if (/\/FlateDecode/i.test(header)) {
+          const descompactado = await descomprimirFlate(bytesStream);
+          if (descompactado?.length) {
+            candidatos.push(new TextDecoder('latin1').decode(descompactado));
+          }
+        } else {
+          candidatos.push(new TextDecoder('latin1').decode(bytesStream));
+        }
+
+        streamRegex.lastIndex = fimStream + endstreamMatch[0].length;
+      }
+
+      const partesExtraidas = candidatos
+        .map(extrairTextoDosOperadoresPdf)
+        .filter(Boolean);
+
+      const texto = partesExtraidas.join('\n').trim();
       if (!texto) {
-        throw new Error('Não foi possível extrair texto do PDF. Verifique se o PDF contém texto selecionável.');
+        throw new Error('Não foi possível extrair texto do PDF.');
       }
 
       return texto;
@@ -468,7 +887,7 @@
               file.name.toLowerCase().endsWith('.pdf');
 
             const texto = isPdf ? await lerTextoDePdf(file) : await file.text();
-            resolve(texto);
+            resolve({ texto, origem: isPdf ? 'pdf' : 'txt', nome: file.name });
           } catch (err) {
             reject(err);
           } finally {
@@ -482,17 +901,17 @@
     }
 
     async function importarEtapa1() {
-      let texto;
+      let arquivo;
       try {
-        texto = await lerArquivoComEscolha();
+        arquivo = await lerArquivoComEscolha();
       } catch (err) {
         console.error('[SIMIL-OS-IMPORT][Etapa 1] erro ao ler arquivo:', err);
         toast(`Falha ao ler o arquivo.\n${err?.message || err}`);
         return;
       }
-      if (!texto) return;
+      if (!arquivo?.texto) return;
 
-      const dados = extrairDadosTxt(texto);
+      const dados = arquivo.origem === 'pdf' ? extrairDadosPdf(arquivo.texto) : extrairDadosTxt(arquivo.texto);
       if (!dados.os) {
         toast('Não consegui localizar o código da OS no arquivo.');
         return;
@@ -501,6 +920,7 @@
       const resultado = preencherCamposEtapa1(dados);
       const preenchidos = resultado.filter(x => x.ok).length;
 
+      console.log('[SIMIL-OS-IMPORT][Etapa 1] Origem:', arquivo.origem);
       console.log('[SIMIL-OS-IMPORT][Etapa 1] Dados:', dados);
       console.log('[SIMIL-OS-IMPORT][Etapa 1] Resultado:', resultado);
 
@@ -511,20 +931,21 @@
     }
 
     async function importarEtapa2() {
-      let texto;
+      let arquivo;
       try {
-        texto = await lerArquivoComEscolha();
+        arquivo = await lerArquivoComEscolha();
       } catch (err) {
         console.error('[SIMIL-OS-IMPORT][Etapa 2] erro ao ler arquivo:', err);
         toast(`Falha ao ler o arquivo.\n${err?.message || err}`);
         return;
       }
-      if (!texto) return;
+      if (!arquivo?.texto) return;
 
-      const dados = extrairDadosTxt(texto);
+      const dados = arquivo.origem === 'pdf' ? extrairDadosPdf(arquivo.texto) : extrairDadosTxt(arquivo.texto);
       const resultado = await preencherCamposEtapa2(dados);
       const preenchidos = resultado.filter(x => x.ok).length;
 
+      console.log('[SIMIL-OS-IMPORT][Etapa 2] Origem:', arquivo.origem);
       console.log('[SIMIL-OS-IMPORT][Etapa 2] Dados:', dados);
       console.log('[SIMIL-OS-IMPORT][Etapa 2] Resultado:', resultado);
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "SIMIL CAIXA - Importar OS TXT",
+  "name": "SIMIL CAIXA - Importar OS TXT/PDF",
   "version": "1.0.0",
-  "description": "Lê o TXT da OS e preenche os campos iniciais no SIMIL.",
+  "description": "Lê o TXT/PDF da OS e preenche os campos iniciais no SIMIL.",
   "content_scripts": [
     {
       "matches": [

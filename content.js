@@ -1,6 +1,10 @@
 (() => {
   try {
-    if (!location.href.includes('/pages/laudo/construcao/cadastrarlaudo.xhtml')) return;
+    const allowedPaths = [
+      '/pages/laudo/construcao/cadastrarlaudo.xhtml',
+      '/pages/laudo/cadastrarlaudo.xhtml'
+    ];
+    if (!allowedPaths.some((path) => location.href.includes(path))) return;
 
     const BTN1_ID = 'similImportarOsEtapa1Btn';
     const BTN2_ID = 'similImportarOsEtapa2Btn';
@@ -521,7 +525,7 @@
         try {
           const pos = String(el.value || '').length;
           el.setSelectionRange?.(pos, pos);
-        } catch (_) {}
+        } catch (_) { }
 
         if (typeof InputEvent !== 'undefined') {
           el.dispatchEvent(new InputEvent('input', {
@@ -767,7 +771,7 @@
         if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
           return new TextDecoder('utf-16le').decode(bytes.slice(2));
         }
-      } catch (_) {}
+      } catch (_) { }
 
       return new TextDecoder('latin1').decode(bytes);
     }

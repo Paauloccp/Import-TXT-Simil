@@ -9,6 +9,44 @@
     const BTN1_ID = 'similImportarOsEtapa1Btn';
     const BTN2_ID = 'similImportarOsEtapa2Btn';
     const TOAST_ID = 'similImportarOsTxtToast';
+    const BRASILAPI_CEP_URL = 'https://brasilapi.com.br/api/cep/v2';
+    const ARCGIS_GEOCODER_URL = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates';
+    const ARCGIS_SCORE_MINIMO = 80;
+    const GEOCODER_URL = 'https://nominatim.openstreetmap.org/search';
+    const GEOCODER_INTERVALO_MINIMO_MS = 1100;
+    const GEOCODER_EMAIL = '';
+
+    const UFS_BR = {
+      AC: 'Acre',
+      AL: 'Alagoas',
+      AP: 'Amapá',
+      AM: 'Amazonas',
+      BA: 'Bahia',
+      CE: 'Ceará',
+      DF: 'Distrito Federal',
+      ES: 'Espírito Santo',
+      GO: 'Goiás',
+      MA: 'Maranhão',
+      MT: 'Mato Grosso',
+      MS: 'Mato Grosso do Sul',
+      MG: 'Minas Gerais',
+      PA: 'Pará',
+      PB: 'Paraíba',
+      PR: 'Paraná',
+      PE: 'Pernambuco',
+      PI: 'Piauí',
+      RJ: 'Rio de Janeiro',
+      RN: 'Rio Grande do Norte',
+      RS: 'Rio Grande do Sul',
+      RO: 'Rondônia',
+      RR: 'Roraima',
+      SC: 'Santa Catarina',
+      SP: 'São Paulo',
+      SE: 'Sergipe',
+      TO: 'Tocantins'
+    };
+
+    let ultimaConsultaGeocoder = 0;
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -28,6 +66,17 @@
         .toLowerCase();
 
     const escapeRegex = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const limparTextoEndereco = (valor) =>
+      String(valor || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const juntarPartesEndereco = (partes) =>
+      partes
+        .map(limparTextoEndereco)
+        .filter(Boolean)
+        .join(', ');
 
     const criarDadosBase = () => ({
       os: null,
@@ -52,7 +101,9 @@
       conjunto: null,
       unidade: null,
       nomeEmpreendimento: null,
-      complementos: null
+      complementos: null,
+      latitude: null,
+      longitude: null
     });
 
     const toast = (msg) => {
@@ -638,6 +689,443 @@
       return { campo: 'CEP', ok: true, valor: cep };
     }
 
+    function limparCepDigitos(cep) {
+      const digits = String(cep || '').replace(/\D/g, '');
+      return digits.length === 8 ? digits : null;
+    }
+
+    function estadoPorUf(uf) {
+      const sigla = String(uf || '').trim().toUpperCase();
+      return UFS_BR[sigla] || sigla || null;
+    }
+
+    function normalizarLogradouroParaGeocode(logradouro) {
+      let texto = limparTextoEndereco(logradouro);
+      if (!texto) return null;
+
+      const substituicoes = [
+        [/^R\.?\s+/i, 'Rua '],
+        [/^AV\.?\s+/i, 'Avenida '],
+        [/^AL\.?\s+/i, 'Alameda '],
+        [/^(PC|PÇ|PCA|PÇA)\.?\s+/i, 'Praça '],
+        [/^TRAV\.?\s+/i, 'Travessa '],
+        [/^ROD\.?\s+/i, 'Rodovia '],
+        [/^ESTR\.?\s+/i, 'Estrada ']
+      ];
+
+      for (const [regex, substituto] of substituicoes) {
+        if (regex.test(texto)) {
+          texto = texto.replace(regex, substituto);
+          break;
+        }
+      }
+
+      return texto;
+    }
+
+    function montarEnderecoLivreParaGeocode(dados, opcoes = {}) {
+      const {
+        incluirNumero = true,
+        incluirBairro = true,
+        incluirCep = true
+      } = opcoes;
+      const logradouro = normalizarLogradouroParaGeocode(dados.logradouro);
+      const logradouroNumero = juntarPartesEndereco([
+        logradouro,
+        incluirNumero ? dados.numero : null
+      ]);
+      const partesEndereco = [
+        logradouroNumero,
+        incluirBairro ? dados.bairro : null,
+        dados.municipio,
+        estadoPorUf(dados.uf),
+        incluirCep ? dados.cep : null
+      ];
+
+      if (!partesEndereco.some(limparTextoEndereco)) return '';
+
+      return juntarPartesEndereco([
+        ...partesEndereco,
+        'Brasil'
+      ]);
+    }
+
+    function criarParametrosGeocoderBase() {
+      const params = new URLSearchParams({
+        format: 'jsonv2',
+        addressdetails: '1',
+        limit: '1',
+        countrycodes: 'br',
+        layer: 'address',
+        'accept-language': 'pt-BR'
+      });
+
+      if (GEOCODER_EMAIL) params.set('email', GEOCODER_EMAIL);
+      return params;
+    }
+
+    function criarConsultaGeocoder(tipo, dados, opcoes = {}) {
+      const params = criarParametrosGeocoderBase();
+      const endereco = montarEnderecoLivreParaGeocode(dados, opcoes);
+
+      if (tipo === 'livre') {
+        if (!endereco) return null;
+        params.set('q', endereco);
+
+        return {
+          tipo,
+          endereco,
+          url: `${GEOCODER_URL}?${params.toString()}`
+        };
+      }
+
+      const logradouro = normalizarLogradouroParaGeocode(dados.logradouro);
+      const street = juntarPartesEndereco([
+        opcoes.incluirNumero === false ? null : dados.numero,
+        logradouro
+      ]).replace(/,\s*/g, ' ');
+
+      if (street) params.set('street', street);
+      if (dados.municipio) params.set('city', limparTextoEndereco(dados.municipio));
+      if (dados.uf) params.set('state', estadoPorUf(dados.uf));
+      if (opcoes.incluirCep !== false && dados.cep) params.set('postalcode', limparTextoEndereco(dados.cep));
+      params.set('country', 'Brasil');
+
+      if (!street && !dados.municipio && !dados.cep) return null;
+
+      return {
+        tipo,
+        endereco,
+        url: `${GEOCODER_URL}?${params.toString()}`
+      };
+    }
+
+    function montarConsultasGeocoder(dados) {
+      const consultas = [];
+
+      [
+        criarConsultaGeocoder('estruturada', dados, { incluirCep: false }),
+        criarConsultaGeocoder('livre', dados, { incluirCep: false }),
+        criarConsultaGeocoder('estruturada', dados),
+        criarConsultaGeocoder('livre', dados),
+        criarConsultaGeocoder('livre', dados, { incluirNumero: false, incluirCep: false }),
+        criarConsultaGeocoder('livre', dados, { incluirNumero: false })
+      ].forEach(consulta => {
+        if (!consulta) return;
+        if (consultas.some(item => item.url === consulta.url)) return;
+        consultas.push(consulta);
+      });
+
+      return consultas;
+    }
+
+    async function respeitarIntervaloGeocoder() {
+      const agora = Date.now();
+      const espera = GEOCODER_INTERVALO_MINIMO_MS - (agora - ultimaConsultaGeocoder);
+      if (espera > 0) await sleep(espera);
+      ultimaConsultaGeocoder = Date.now();
+    }
+
+    function extrairCoordenadasDoResultadoGeocoder(lista) {
+      if (!Array.isArray(lista)) return null;
+
+      for (const item of lista) {
+        const latitude = Number(item?.lat);
+        const longitude = Number(item?.lon);
+
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          return {
+            latitude,
+            longitude,
+            displayName: item.display_name || null
+          };
+        }
+      }
+
+      return null;
+    }
+
+    function montarConsultasArcgis(dados) {
+      const enderecos = [
+        montarEnderecoLivreParaGeocode(dados, { incluirCep: false }),
+        montarEnderecoLivreParaGeocode(dados),
+        montarEnderecoLivreParaGeocode(dados, { incluirBairro: false, incluirCep: false }),
+        montarEnderecoLivreParaGeocode(dados, { incluirNumero: false, incluirCep: false })
+      ].filter(Boolean);
+
+      return [...new Set(enderecos)].map(endereco => {
+        const params = new URLSearchParams({
+          f: 'json',
+          SingleLine: endereco,
+          countryCode: 'BRA',
+          sourceCountry: 'BRA',
+          maxLocations: '3',
+          outFields: 'Match_addr,Addr_type,Score'
+        });
+
+        return {
+          tipo: 'arcgis',
+          endereco,
+          url: `${ARCGIS_GEOCODER_URL}?${params.toString()}`
+        };
+      });
+    }
+
+    function extrairCoordenadasArcgis(payload) {
+      const candidatos = Array.isArray(payload?.candidates) ? payload.candidates : [];
+      const tiposAceitos = new Set([
+        'PointAddress',
+        'StreetAddress',
+        'StreetAddressExt',
+        'StreetName',
+        'POI',
+        'Postal'
+      ]);
+
+      for (const candidato of candidatos) {
+        const latitude = Number(candidato?.location?.y);
+        const longitude = Number(candidato?.location?.x);
+        const score = Number(candidato?.score ?? candidato?.attributes?.Score);
+        const tipo = candidato?.attributes?.Addr_type || null;
+
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+        if (Number.isFinite(score) && score < ARCGIS_SCORE_MINIMO) continue;
+        if (tipo && !tiposAceitos.has(tipo)) continue;
+
+        return {
+          latitude,
+          longitude,
+          displayName: candidato.address || candidato?.attributes?.Match_addr || null,
+          score: Number.isFinite(score) ? score : null,
+          tipoResultado: tipo
+        };
+      }
+
+      return null;
+    }
+
+    async function buscarCoordenadasArcgis(dados) {
+      const consultas = montarConsultasArcgis(dados);
+      let ultimoErro = null;
+
+      for (const consulta of consultas) {
+        try {
+          const response = await fetch(consulta.url, {
+            method: 'GET',
+            headers: {
+              Accept: 'application/json'
+            },
+            cache: 'no-store'
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const payload = await response.json();
+          const coordenadas = extrairCoordenadasArcgis(payload);
+
+          if (coordenadas) {
+            return {
+              ok: true,
+              ...coordenadas,
+              endereco: consulta.endereco,
+              tipoConsulta: 'arcgis'
+            };
+          }
+        } catch (err) {
+          ultimoErro = err;
+          console.warn('[SIMIL-OS-IMPORT][ArcGIS] falha na consulta:', err);
+        }
+      }
+
+      return {
+        ok: false,
+        motivo: ultimoErro?.message
+          ? `Não foi possível buscar coordenadas no ArcGIS (${ultimoErro.message}).`
+          : 'ArcGIS não encontrou coordenadas para o endereço.'
+      };
+    }
+
+    function extrairCoordenadasBrasilApi(payload) {
+      const coordenadas = payload?.location?.coordinates;
+      if (!coordenadas) return null;
+
+      const latitude = Number(coordenadas.latitude);
+      const longitude = Number(coordenadas.longitude);
+
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+      return {
+        latitude,
+        longitude,
+        displayName: juntarPartesEndereco([
+          payload.street,
+          payload.neighborhood,
+          payload.city,
+          payload.state,
+          payload.cep
+        ])
+      };
+    }
+
+    async function buscarEnderecoPorCepBrasilApi(cep) {
+      const cepLimpo = limparCepDigitos(cep);
+      if (!cepLimpo) return null;
+
+      try {
+        const response = await fetch(`${BRASILAPI_CEP_URL}/${cepLimpo}`, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json'
+          },
+          cache: 'no-store'
+        });
+
+        if (!response.ok) return null;
+
+        const payload = await response.json();
+
+        return {
+          dados: {
+            cep: payload.cep || cep,
+            uf: payload.state || null,
+            municipio: payload.city || null,
+            bairro: payload.neighborhood || null,
+            logradouro: payload.street || null
+          },
+          coordenadas: extrairCoordenadasBrasilApi(payload)
+        };
+      } catch (err) {
+        console.warn('[SIMIL-OS-IMPORT][BrasilAPI] falha ao consultar CEP:', err);
+        return null;
+      }
+    }
+
+    async function buscarCoordenadasPorEndereco(dados) {
+      let dadosConsulta = dados;
+      const enderecoCep = await buscarEnderecoPorCepBrasilApi(dados.cep);
+
+      if (enderecoCep?.coordenadas) {
+        return {
+          ok: true,
+          ...enderecoCep.coordenadas,
+          endereco: montarEnderecoLivreParaGeocode({
+            ...dados,
+            ...enderecoCep.dados,
+            numero: dados.numero
+          }),
+          tipoConsulta: 'brasilapi-cep'
+        };
+      }
+
+      if (enderecoCep?.dados) {
+        dadosConsulta = {
+          ...dados,
+          uf: enderecoCep.dados.uf || dados.uf,
+          municipio: enderecoCep.dados.municipio || dados.municipio,
+          bairro: enderecoCep.dados.bairro || dados.bairro,
+          logradouro: enderecoCep.dados.logradouro || dados.logradouro,
+          cep: enderecoCep.dados.cep || dados.cep
+        };
+      }
+
+      const coordenadasArcgis = await buscarCoordenadasArcgis(dadosConsulta);
+      if (coordenadasArcgis.ok) return coordenadasArcgis;
+
+      const consultas = montarConsultasGeocoder(dadosConsulta);
+      if (!consultas.length) {
+        return {
+          ok: false,
+          motivo: 'Endereço insuficiente para consulta de coordenadas.'
+        };
+      }
+
+      let ultimoErro = null;
+
+      for (const consulta of consultas) {
+        try {
+          await respeitarIntervaloGeocoder();
+
+          const response = await fetch(consulta.url, {
+            method: 'GET',
+            headers: {
+              Accept: 'application/json'
+            },
+            cache: 'no-store'
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const payload = await response.json();
+          const coordenadas = extrairCoordenadasDoResultadoGeocoder(payload);
+
+          if (coordenadas) {
+            return {
+              ok: true,
+              ...coordenadas,
+              endereco: consulta.endereco,
+              tipoConsulta: consulta.tipo
+            };
+          }
+        } catch (err) {
+          ultimoErro = err;
+          console.warn('[SIMIL-OS-IMPORT][Geocoder] falha na consulta:', consulta.tipo, err);
+        }
+      }
+
+      return {
+        ok: false,
+        endereco: consultas[0]?.endereco || null,
+        motivo: ultimoErro?.message
+          ? `Não foi possível buscar coordenadas (${ultimoErro.message}).`
+          : 'Não encontrei coordenadas para o endereço.'
+      };
+    }
+
+    function formatarCoordenadaAssinada(valor) {
+      const n = Number(valor);
+      if (!Number.isFinite(n)) return null;
+      const prefixo = n > 0 ? '+' : '';
+      return `${prefixo}${n.toFixed(6)}`;
+    }
+
+    async function preencherCoordenadasGeodesicas(dados) {
+      const endereco = montarEnderecoLivreParaGeocode(dados);
+      if (!endereco) return [];
+
+      toast(`Buscando coordenadas...\n${endereco}`);
+
+      const geocode = await buscarCoordenadasPorEndereco(dados);
+      if (!geocode.ok) {
+        return [{
+          campo: 'Coordenadas',
+          ok: false,
+          valor: endereco,
+          motivo: geocode.motivo
+        }];
+      }
+
+      dados.latitude = geocode.latitude;
+      dados.longitude = geocode.longitude;
+
+      const latitude = formatarCoordenadaAssinada(geocode.latitude);
+      const longitude = formatarCoordenadaAssinada(geocode.longitude);
+      const coordenadas = `${latitude},${longitude}`;
+      const input = encontrarCampoPorLabel('Coordenadas Grau Decimal', 'input');
+
+      return [{
+        campo: 'Coordenadas Grau Decimal',
+        ok: preencherCampo(input, coordenadas),
+        valor: coordenadas,
+        endereco: geocode.endereco,
+        displayName: geocode.displayName,
+        tipoConsulta: geocode.tipoConsulta
+      }];
+    }
+
     function preencherCamposEtapa1(dados) {
       if (!dados.os) return [];
 
@@ -743,6 +1231,9 @@
       if (dados.cep) {
         resultado.push(preencherCepSomente(dados.cep));
       }
+
+      const resultadoCoordenadas = await preencherCoordenadasGeodesicas(dados);
+      resultado.push(...resultadoCoordenadas);
 
       return resultado;
     }
@@ -955,7 +1446,15 @@
 
       toast(
         `Dados da OS processados.\n` +
-        `Preenchidos ${preenchidos}/${resultado.length} campos.`
+        `Preenchidos ${preenchidos}/${resultado.length} campos.` +
+        (() => {
+          const coordenadasOk = resultado.find(x => x.campo === 'Coordenadas Grau Decimal' && x.ok);
+          const coordenadasFalha = resultado.find(x => x.campo === 'Coordenadas' && !x.ok);
+
+          if (coordenadasOk) return `\nCoordenadas: ${coordenadasOk.valor}`;
+          if (coordenadasFalha) return `\n${coordenadasFalha.motivo}`;
+          return '';
+        })()
       );
     }
 
